@@ -1,3 +1,9 @@
+> [!WARNING]
+> **个人学习副本，非官方仓库。** 上游在 [codeberg.org/fitguy/Chompass](https://codeberg.org/fitguy/Chompass)，本副本仅用于存档学习。
+> 改动说明见 [FORK.md](FORK.md)。
+>
+> This is a **personal study fork**, not the official repository. Upstream: [fitguy/Chompass](https://codeberg.org/fitguy/Chompass).
+
 <div align="center">
 
 <img src="website/static/img/banner.svg" alt="Chompass — private calorie tracking" width="600" />

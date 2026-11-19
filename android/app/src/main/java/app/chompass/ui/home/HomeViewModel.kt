@@ -12,6 +12,7 @@ import app.chompass.data.mergesWithSavedFood
 import app.chompass.data.loadLastGoalChangeSheet
 import app.chompass.models.ActiveBurnShade
 import app.chompass.models.GaugeBudget
+import app.chompass.models.AiFeature
 import app.chompass.models.AiProfile
 import app.chompass.models.analysisSelectedModel
 import app.chompass.models.resolveModelForRequest
@@ -3665,9 +3666,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             val images = item.imageFilenames.mapNotNull { filename ->
                 runCatching { container.analysisQueue.loadImage(filename) }.getOrNull()
             }
-            // Record what this run will try (one-off override or active profile)
-            // so the queue row can show "Last tried: profile · model".
-            val cfg = container.prefs.aiCallConfig(profileOverride)
+            // Record what this run will try (one-off override or the profile the
+            // entry type routes to) so the queue row can show "Last tried: profile · model".
+            val cfg = container.prefs.aiCallConfig(
+                profileOverride,
+                if (images.isNotEmpty()) AiFeature.FOOD_PHOTO else AiFeature.FOOD_TEXT,
+            )
             container.analysisQueue.upsert(
                 queuedEntryWithAttemptRecord(item, cfg.profile, hasImages = images.isNotEmpty())
             )

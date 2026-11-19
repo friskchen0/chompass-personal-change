@@ -9,8 +9,8 @@ import app.chompass.data.PreferencesStore
 import app.chompass.data.responseCapFor
 import app.chompass.data.effectiveReadTimeoutSeconds
 import app.chompass.services.ai.ProviderDirectory.Companion.findEntry
-import app.chompass.data.defaultAiProfileSnapshot
 import app.chompass.models.AIProvider
+import app.chompass.models.AiFeature
 import app.chompass.models.AiProfile
 import app.chompass.R
 import app.chompass.models.BodyMeasurement
@@ -388,7 +388,10 @@ class FoodAnalysisService(
             - Use integers only.
         """.trimIndent()
         return FoodJsonParser.parseOptionalNutrientGoals(
-            callAi(prompt, imageBytes = null, op = "optionalNutrients", reportPhases = false),
+            callAi(
+                prompt, imageBytes = null, op = "optionalNutrients", reportPhases = false,
+                feature = AiFeature.GOAL_RECALC,
+            ),
         )
     }
 
@@ -455,7 +458,9 @@ class FoodAnalysisService(
             - Basal energy average: ${energy.basalAverageCalories?.let { "$it kcal/day" } ?: "not available"}
             - Health total: $healthTotalLine
         """.trimIndent()
-        val suggestion = FoodJsonParser.parseHealthEnergyGoalSuggestion(callAi(prompt, imageBytes = null))
+        val suggestion = FoodJsonParser.parseHealthEnergyGoalSuggestion(
+            callAi(prompt, imageBytes = null, feature = AiFeature.GOAL_RECALC),
+        )
         return suggestion.copy(calories = CalorieSafety.clampAuto(suggestion.calories, profile))
     }
 
@@ -563,6 +568,7 @@ class FoodAnalysisService(
             callAi(
                 safePrompt, imageBytes = null, op = "calculateGoals", reportPhases = false,
                 smartPrompt = smartPrompt, trace = trace,
+                feature = AiFeature.GOAL_RECALC,
             ),
         )
         val safeCalories = CalorieSafety.clampAuto(parsed.calories, profile)
@@ -1769,7 +1775,8 @@ class FoodAnalysisService(
         if (callAiDelegate != null) {
             throw AiError.Api("Grounded tool loop requires a live AI provider.", messageRes = R.string.ai_error_grounded_requires_provider)
         }
-        val ap = prefs!!.activeAiProfile.first() ?: defaultAiProfileSnapshot()
+        // Grounded loops are photo/vision work, so they follow the Food-photos slot.
+        val ap = prefs!!.aiCallConfig(feature = AiFeature.FOOD_PHOTO).profile
         val primary = ap.provider
         if (primary.apiFormat == AIProvider.ApiFormat.ON_DEVICE) {
             throw AiError.Api("Grounded tool loop is not available for on-device models.", messageRes = R.string.ai_error_grounded_on_device)
@@ -1824,7 +1831,8 @@ class FoodAnalysisService(
                 onProgress = onProgress,
             )
         } catch (primaryError: Throwable) {
-            val fallback = currentFallbackConfig(primary, primaryModel, prefs!!.aiCallConfig()) ?: throw primaryError
+            if (!isFallbackEligible(primaryError)) throw primaryError
+            val fallback = currentFallbackConfig(primary, primaryModel, prefs!!.aiCallConfig(feature = AiFeature.FOOD_PHOTO)) ?: throw primaryError
             val fallbackClient = AiHttp.clientForProvider(
                 okHttp,
                 fallback.provider,
@@ -1901,6 +1909,8 @@ class FoodAnalysisService(
         trace: GoalCallTrace? = null,
         rebuildPrompt: (suspend (AIProvider, String, EntryConstituentPromptKind) -> String)? = null,
         profileOverride: AiProfile? = null,
+        /** Per-feature routing slot; null = derive from image presence (photo vs text). */
+        feature: AiFeature? = null,
     ): String {
         return callAi(
             prompt,
@@ -1912,6 +1922,7 @@ class FoodAnalysisService(
             trace,
             rebuildPrompt,
             profileOverride = profileOverride,
+            feature = feature,
         )
     }
 
@@ -1931,6 +1942,13 @@ class FoodAnalysisService(
         kindOverride: EntryConstituentPromptKind? = null,
         /** One-off profile override (queue "Run with…"); null = active profile. */
         profileOverride: AiProfile? = null,
+        /**
+         * Per-feature routing slot (#per-feature profiles). Null derives the slot
+         * from the payload: image-bearing calls use [AiFeature.FOOD_PHOTO],
+         * text-only calls [AiFeature.FOOD_TEXT]. Goal recalculation is the one
+         * caller that has to name its slot explicitly (it is text-only too).
+         */
+        feature: AiFeature? = null,
     ): String {
         val hasImages = imageBytesList.any { it.isNotEmpty() }
         suspend fun modelFor(provider: AIProvider, selected: String?, visionModel: String?): String =
@@ -1983,7 +2001,10 @@ class FoodAnalysisService(
             return demoJson
         }
 
-        val cfg = prefs!!.aiCallConfig(profileOverride)
+        val cfg = prefs!!.aiCallConfig(
+            profileOverride,
+            feature ?: if (hasImages) AiFeature.FOOD_PHOTO else AiFeature.FOOD_TEXT,
+        )
         // #123: the Goal recalc prompt setting maps to a dispatch-level tier
         // override; AUTO (null) keeps the model-name rules untouched.
         val tierOverride = when (cfg.goalRecalcTier) {
@@ -2089,6 +2110,9 @@ class FoodAnalysisService(
                     if (partialsEmitted) throw primaryError
                     // A queue Run-with override must not fall through to the global fallback profile.
                     if (profileOverride != null) throw primaryError
+                    // Transient-only: a rejected key / unknown model / bad request fails
+                    // on the fallback too, and switching would hide the error to fix.
+                    if (!isFallbackEligible(primaryError)) throw primaryError
                     val fallback = currentFallbackConfig(primary, primaryModel, cfg) ?: throw primaryError
                     trace?.let {
                         it.fallbackFired = true

@@ -8,6 +8,7 @@ import app.chompass.AppContainer
 import app.chompass.R
 import app.chompass.debug.DebugTrace
 import app.chompass.models.AIProvider
+import app.chompass.models.AiFeature
 import app.chompass.models.AiProfile
 import app.chompass.models.AutoBalanceMacro
 import app.chompass.models.BodyFatEntry
@@ -112,6 +113,13 @@ data class SettingsUiState(
     val activeProfile: AiProfile? = null,
     /** Profile used when the active one fails; null = no fallback. */
     val fallbackProfileId: String? = null,
+    /**
+     * Per-feature AI routing ([AiFeature] → profile id). A missing/null entry
+     * follows [activeProfile]; the routing sheet writes here.
+     */
+    val featureProfileIds: Map<AiFeature, String?> = emptyMap(),
+    /** Feature whose picker the routing sheet is currently editing (UI-only). */
+    val routingFeature: AiFeature = AiFeature.FOOD_PHOTO,
     val aiReadTimeoutSeconds: Int = app.chompass.data.DEFAULT_AI_READ_TIMEOUT_SECONDS,
     val servingUnitInferenceMode: ServingUnitInferenceMode = ServingUnitInferenceMode.Default,
     val heuristicServingUnitSettings: HeuristicServingUnitSettings = HeuristicServingUnitSettings.Default,
@@ -314,7 +322,22 @@ data class SettingsUiState(
 
     /** Profile configured as fallback; null = fallback disabled-by-absence. */
     val fallbackProfile: AiProfile? get() = profiles.firstOrNull { it.id.toString() == fallbackProfileId }
+
+    /** How many features are pinned to their own profile (0 = all follow the active one). */
+    val routedFeatureCount: Int get() = featureProfileIds.values.count { it != null }
+
+    /** Profile a feature will actually use: its slot when live, else the active profile. */
+    fun profileForFeature(feature: AiFeature): AiProfile? =
+        featureProfileIds[feature]?.let { id -> profiles.firstOrNull { it.id.toString() == id } } ?: activeProfile
 }
+
+/** One store snapshot for the profile + routing slice (see the collector below). */
+private data class AiRoutingSnapshot(
+    val profiles: List<AiProfile>,
+    val active: AiProfile?,
+    val fallbackId: String?,
+    val featureIds: Map<AiFeature, String?>,
+)
 
 /** One row of the Settings hub Suggestions card. */
 data class SettingsSuggestion(
@@ -388,6 +411,7 @@ internal fun commitSettingsHydrate(
         profiles = current.profiles.ifEmpty { incoming.profiles },
         activeProfile = current.activeProfile ?: incoming.activeProfile,
         fallbackProfileId = current.fallbackProfileId ?: incoming.fallbackProfileId,
+        featureProfileIds = current.featureProfileIds.ifEmpty { incoming.featureProfileIds },
         apiKeyMasked = current.apiKeyMasked.ifEmpty { incoming.apiKeyMasked },
         homeDisplay = storePaintedHomeDisplay ?: incoming.homeDisplay,
     )
@@ -450,8 +474,11 @@ class SettingsViewModel(val container: AppContainer) : ViewModel() {
                 container.prefs.aiProfiles,
                 container.prefs.activeAiProfile,
                 container.prefs.fallbackAiProfileId,
-            ) { profiles, active, fallbackId -> Triple(profiles, active, fallbackId) }
-                .collect { (profiles, active, fallbackId) ->
+                container.prefs.featureAiProfileIds,
+            ) { profiles, active, fallbackId, featureIds ->
+                AiRoutingSnapshot(profiles, active, fallbackId, featureIds)
+            }
+                .collect { (profiles, active, fallbackId, featureIds) ->
                     val masked = runCatching {
                         maskKey(active?.let { container.keyStore.profileApiKey(it.id) })
                     }.getOrDefault("")
@@ -460,6 +487,7 @@ class SettingsViewModel(val container: AppContainer) : ViewModel() {
                             profiles = profiles,
                             activeProfile = active,
                             fallbackProfileId = fallbackId,
+                            featureProfileIds = featureIds,
                             apiKeyMasked = masked,
                         )
                     }
@@ -1088,6 +1116,19 @@ class SettingsViewModel(val container: AppContainer) : ViewModel() {
         }
     }
 
+    /** Pins [feature] to [id]'s profile; null puts the feature back on the active profile. */
+    fun setFeatureProfile(feature: AiFeature, id: String?) {
+        viewModelScope.launch {
+            container.prefs.setFeatureAiProfileId(feature, id)
+            _ui.value = _ui.value.copy(featureProfileIds = _ui.value.featureProfileIds + (feature to id))
+        }
+    }
+
+    /** UI-only: which feature the routing picker is editing. */
+    fun setRoutingFeature(feature: AiFeature) {
+        _ui.value = _ui.value.copy(routingFeature = feature)
+    }
+
     fun setAppearanceMode(mode: String) = updateUiPref(
         { container.prefs.setAppearanceMode(mode) },
         { copy(appearanceMode = mode) },
@@ -1316,6 +1357,12 @@ class SettingsViewModel(val container: AppContainer) : ViewModel() {
             if (_ui.value.fallbackProfileId == id.toString()) {
                 container.prefs.setFallbackAiProfileId(null)
             }
+            // A deleted profile must not stay pinned to a feature: the resolver would
+            // silently fall back anyway, but the sheet would show a dangling name.
+            _ui.value.featureProfileIds
+                .filterValues { it == id.toString() }
+                .keys
+                .forEach { feature -> container.prefs.setFeatureAiProfileId(feature, null) }
             val remaining = container.prefs.aiProfiles.first()
             if (remaining.isNotEmpty()) {
                 container.prefs.setActiveAiProfileId(remaining.first().id.toString())

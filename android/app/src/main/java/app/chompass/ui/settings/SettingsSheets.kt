@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import app.chompass.R
 import app.chompass.models.AIProvider
 import app.chompass.services.ai.ProviderDirectory.Companion.matchedName
+import app.chompass.models.AiFeature
 import app.chompass.models.AiProfile
 import app.chompass.models.CalorieSafety
 import app.chompass.models.EnergyFormat
@@ -739,6 +740,47 @@ internal fun SettingsSheets(
                         else profile.id.toString() == ui.fallbackProfileId
                     },
                     onSelect = { vm.setFallbackProfile(it?.id?.toString()); onDismiss() },
+                )
+                SettingsSheet.AI_FEATURE_ROUTING -> ListSheet(
+                    title = stringResource(R.string.ai_feature_routing_title),
+                    items = AiFeature.entries.toList(),
+                    label = { stringResource(it.displayNameRes) },
+                    subtitle = { feature ->
+                        val pinned = ui.featureProfileIds[feature]
+                        val profile = ui.profileForFeature(feature)
+                        if (pinned == null || profile == null) {
+                            stringResource(R.string.ai_feature_follows_active_suffix)
+                        } else {
+                            val providerName = vm.container.providerDirectory.matchedName(profile.provider, profile.baseUrl)
+                                ?: stringResource(profile.provider.displayNameRes)
+                            "${profile.name} · $providerName"
+                        }
+                    },
+                    selected = { false },
+                    onSelect = { feature ->
+                        vm.setRoutingFeature(feature)
+                        onOpenSheet?.invoke(SettingsSheet.AI_FEATURE_PROFILE) ?: onDismiss()
+                    },
+                )
+                SettingsSheet.AI_FEATURE_PROFILE -> ListSheet(
+                    title = stringResource(ui.routingFeature.displayNameRes),
+                    footer = stringResource(ui.routingFeature.descriptionRes),
+                    items = listOf<AiProfile?>(null) + ui.profiles,
+                    label = { it?.name ?: stringResource(R.string.ai_feature_follow_active) },
+                    subtitle = { profile ->
+                        profile?.let {
+                            vm.container.providerDirectory.matchedName(it.provider, it.baseUrl)
+                                ?: stringResource(it.provider.displayNameRes)
+                        }
+                    },
+                    selected = { profile ->
+                        if (profile == null) ui.featureProfileIds[ui.routingFeature] == null
+                        else profile.id.toString() == ui.featureProfileIds[ui.routingFeature]
+                    },
+                    onSelect = { profile ->
+                        vm.setFeatureProfile(ui.routingFeature, profile?.id?.toString())
+                        onDismiss()
+                    },
                 )
                 SettingsSheet.GENDER -> ListSheet(
                     title = stringResource(R.string.sheet_gender),

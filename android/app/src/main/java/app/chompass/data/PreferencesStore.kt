@@ -3,6 +3,7 @@ package app.chompass.data
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import app.chompass.models.AIProvider
+import app.chompass.models.AiFeature
 import app.chompass.models.AiProfile
 import app.chompass.models.BodyFatEntry
 import app.chompass.models.BodyCompositionEntry
@@ -539,6 +540,10 @@ class PreferencesStore(private val appContext: Context) : NutritionSyncStore {
     val fallbackAiProfile: Flow<AiProfile?> get() = fallbackAiProfileImpl
     val fallbackAiProfileId: Flow<String?> get() = dataStore.data.map { it[Keys.FALLBACK_AI_PROFILE_ID] }
     suspend fun setFallbackAiProfileId(id: String?) = setFallbackAiProfileIdImpl(id)
+    /** Per-feature profile slot; empty = follow the active profile. */
+    fun featureAiProfileId(feature: AiFeature): Flow<String?> = featureAiProfileIdImpl(feature)
+    val featureAiProfileIds: Flow<Map<AiFeature, String?>> get() = featureAiProfileIdsImpl
+    suspend fun setFeatureAiProfileId(feature: AiFeature, id: String?) = setFeatureAiProfileIdImpl(feature, id)
     /** Compat view over the active profile (single-slot legacy readers). */
     val selectedAIProvider: Flow<AIProvider> get() = activeAiProfile.map { it?.provider ?: AIProvider.GEMINI }
     val selectedAIModel: Flow<String?> get() = activeAiProfile.map { it?.model }
@@ -575,8 +580,9 @@ class PreferencesStore(private val appContext: Context) : NutritionSyncStore {
     val openRouterReasoningEffort: Flow<OpenRouterReasoningEffort> get() = openRouterReasoningEffortImpl
     suspend fun setOpenRouterReasoningEffort(e: OpenRouterReasoningEffort) = setOpenRouterReasoningEffortImpl(e)
     suspend fun setGoalRecalcTier(v: GoalRecalcTierOverride) = setGoalRecalcTierImpl(v)
-    /** One-snapshot read of every AI-call setting — see [AiCallConfig]. */
-    internal suspend fun aiCallConfig(profileOverride: AiProfile? = null): AiCallConfig = aiCallConfigImpl(profileOverride)
+    /** One-snapshot read of every AI-call setting — see [AiCallConfig]. [feature] selects the routed profile. */
+    internal suspend fun aiCallConfig(profileOverride: AiProfile? = null, feature: AiFeature? = null): AiCallConfig =
+        aiCallConfigImpl(profileOverride, feature)
     /** One-shot legacy single-slot → named-profile migration (idempotent). */
     internal suspend fun ensureAiProfilesMigrated(keyStore: KeyStore, context: Context) =
         ensureAiProfilesMigratedImpl(keyStore, context)

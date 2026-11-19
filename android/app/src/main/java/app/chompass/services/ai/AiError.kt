@@ -65,6 +65,35 @@ sealed class AiError(
 }
 
 /**
+ * Whether a failed primary attempt is worth repeating on the fallback profile.
+ *
+ * Local failures are not: AI switched off, an image that cannot be converted,
+ * a malformed or blocked endpoint URL. Those fail identically on every profile,
+ * so a second call only delays the error the user has to act on.
+ *
+ * A rejected key (401/403) is also kept on the primary on purpose: a silent
+ * provider switch would hide a dead/expired key the user has to re-paste, and
+ * a fallback profile that lacks the capability (vision, for example) would turn
+ * a clear "key rejected" into a confusing downstream failure.
+ *
+ * Everything else stays eligible, including 400 and 404: Gemini reports region
+ * blocks and unavailable models as 400, and on-device low-memory/model-missing
+ * errors are precisely what the fallback (smaller model or cloud profile) is
+ * there to rescue.
+ */
+internal fun isFallbackEligible(error: Throwable): Boolean = when (error) {
+    is AiError.Disabled,
+    is AiError.ImageConversionFailed,
+    is AiError.InvalidUrl,
+    is AiError.InsecureHttpBlocked,
+    -> false
+
+    is AiError.Api -> error.httpStatus != 401 && error.httpStatus != 403
+
+    else -> true
+}
+
+/**
  * Resolve an [AiError] to the user's language at the UI boundary. Falls back
  * to the raw message (provider text) when the type carries no resource.
  */

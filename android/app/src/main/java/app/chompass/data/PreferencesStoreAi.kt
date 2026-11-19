@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.edit
 
 import androidx.annotation.StringRes
 import app.chompass.R
+import app.chompass.models.AiFeature
 import app.chompass.models.AiProfile
 import app.chompass.models.AIProvider
 import app.chompass.models.HeuristicServingUnitSettings
@@ -142,6 +143,48 @@ internal suspend fun PreferencesStore.setFallbackAiProfileIdImpl(id: String?) {
     dataStore.edit {
         if (id.isNullOrBlank()) it.remove(Keys.FALLBACK_AI_PROFILE_ID) else it[Keys.FALLBACK_AI_PROFILE_ID] = id
     }
+}
+
+// -- Per-feature AI routing ---------------------------------------------
+
+/** Raw per-feature slot; null/blank = follow the active profile. */
+internal fun PreferencesStore.featureAiProfileIdImpl(feature: AiFeature): Flow<String?> =
+    dataStore.data.map { it[Keys.featureAiProfileId(feature)]?.takeIf { id -> id.isNotBlank() } }
+
+/** Every feature slot in one read, for the settings sheet. */
+internal val PreferencesStore.featureAiProfileIdsImpl: Flow<Map<AiFeature, String?>>
+    get() = dataStore.data.map { prefs ->
+        AiFeature.entries.associateWith { feature ->
+            prefs[Keys.featureAiProfileId(feature)]?.takeIf { it.isNotBlank() }
+        }
+    }
+
+internal suspend fun PreferencesStore.setFeatureAiProfileIdImpl(feature: AiFeature, id: String?) {
+    dataStore.edit {
+        val key = Keys.featureAiProfileId(feature)
+        if (id.isNullOrBlank()) it.remove(key) else it[key] = id
+    }
+}
+
+/**
+ * The profile that serves [feature] out of one already-decoded snapshot.
+ *
+ * Resolution order: the feature's own slot when it names a live profile, else
+ * the active profile, else the first profile, else null (empty store). A slot
+ * pointing at a deleted profile degrades to the active profile instead of
+ * taking every photo/chat call down with it.
+ */
+internal fun resolveFeatureProfile(
+    profiles: List<AiProfile>,
+    prefs: androidx.datastore.preferences.core.Preferences,
+    feature: AiFeature,
+): AiProfile? {
+    val slotId = prefs[Keys.featureAiProfileId(feature)]?.takeIf { it.isNotBlank() }
+    if (slotId != null) {
+        profiles.firstOrNull { it.id.toString() == slotId }?.let { return it }
+    }
+    return profiles.firstOrNull { it.id.toString() == prefs[Keys.ACTIVE_AI_PROFILE_ID] }
+        ?: profiles.firstOrNull()
 }
 
 /**
@@ -714,10 +757,14 @@ internal fun defaultAiProfileSnapshot(provider: AIProvider = AIProvider.GEMINI):
         createdAt = Instant.now(),
     )
 
-internal suspend fun PreferencesStore.aiCallConfigImpl(profileOverride: AiProfile? = null): AiCallConfig {
+internal suspend fun PreferencesStore.aiCallConfigImpl(
+    profileOverride: AiProfile? = null,
+    feature: AiFeature? = null,
+): AiCallConfig {
     val prefs = dataStore.data.first()
     val profiles = decodeAiProfiles(prefs[Keys.AI_PROFILES_JSON])
     val profile = profileOverride
+        ?: feature?.let { resolveFeatureProfile(profiles, prefs, it) }
         ?: profiles.firstOrNull { it.id.toString() == prefs[Keys.ACTIVE_AI_PROFILE_ID] }
         ?: profiles.firstOrNull()
         ?: defaultAiProfileSnapshot()

@@ -252,6 +252,14 @@ internal object Keys {
         val AI_PROFILES_JSON = stringPreferencesKey("aiProfilesJson")
         val ACTIVE_AI_PROFILE_ID = stringPreferencesKey("activeAiProfileId")
         val FALLBACK_AI_PROFILE_ID = stringPreferencesKey("fallbackAiProfileId")
+
+        /**
+         * Per-feature profile id ([app.chompass.models.AiFeature]). Empty or
+         * unknown id = follow [ACTIVE_AI_PROFILE_ID], which keeps installs that
+         * never open the routing screen on the exact single-profile behavior.
+         */
+        fun featureAiProfileId(feature: app.chompass.models.AiFeature): Preferences.Key<String> =
+            stringPreferencesKey("aiFeatureProfileId_${feature.storageKey}")
         /** Per-provider vision-model slot (upstream #195); empty = primary model handles images too. */
         fun visionModel(provider: AIProvider): Preferences.Key<String> =
             stringPreferencesKey("visionModel_${provider.name}")

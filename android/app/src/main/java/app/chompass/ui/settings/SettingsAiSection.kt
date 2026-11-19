@@ -33,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
 import app.chompass.R
 import app.chompass.models.AIProvider
+import app.chompass.models.AiFeature
 import app.chompass.services.ai.ProviderDirectory.Companion.matchedName
 import app.chompass.models.LocaleFormat
 import app.chompass.services.FillGapsFeature
@@ -109,6 +110,21 @@ internal fun SettingsAiSection(
                     fallbackSubtitle,
                     icon = Icons.Outlined.Person,
                 ) { onOpenSheet(SettingsSheet.FALLBACK_PROFILE) }
+                HorizontalDivider()
+                // Per-feature routing: each AI feature can run on its own profile
+                // (provider + model + endpoint + key), e.g. Gemini for photos and
+                // DeepSeek for the Coach. Unset features follow the active profile.
+                val routedCount = ui.routedFeatureCount
+                SettingRow(
+                    stringResource(R.string.settings_ai_feature_routing),
+                    if (routedCount == 0) {
+                        stringResource(R.string.ai_feature_follow_active)
+                    } else {
+                        "$routedCount / ${AiFeature.entries.size}"
+                    },
+                    icon = Icons.Outlined.Tune,
+                ) { onOpenSheet(SettingsSheet.AI_FEATURE_ROUTING) }
+                SettingFootnote(stringResource(R.string.settings_ai_feature_routing_footer))
                 val downloadManager = vm.container.onDeviceModelDownloadManager
                 val storageEpoch by downloadManager.storageEpoch.collectAsState()
                 val leftoverBytes = remember(storageEpoch) { downloadManager.occupiedBytes() }
